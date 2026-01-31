@@ -144,40 +144,74 @@ void convolution(Image *image, float *filter, int filter_size, Image *result) {
     }
 }
 
+// Helper function to compute binomial coefficient C(n, k)
+static int binomial_coeff(int n, int k) {
+    if (k > n) return 0;
+    if (k == 0 || k == n) return 1;
+
+    int result = 1;
+    for (int i = 0; i < k; i++) {
+        result = result * (n - i) / (i + 1);
+    }
+    return result;
+}
+
 // Edge detection filter (Sobel operator - horizontal)
+// Uses binomial coefficients for smoothing and gradient for derivative
 void create_sobel_x_filter(float *filter, int size) {
-    // 3x3 Sobel X filter
-    float sobel_x[9] = {
-        -1, 0, 1,
-        -2, 0, 2,
-        -1, 0, 1
-    };
-    
-    for (int i = 0; i < size * size; i++) {
-        if (i < 9) {
-            filter[i] = sobel_x[i];
-        } else {
-            filter[i] = 0.0f;
+    int center = size / 2;
+    int n = size - 1;
+
+    // Create smoothing kernel using binomial coefficients (Pascal's triangle row)
+    float *smooth = (float*)malloc(size * sizeof(float));
+    for (int i = 0; i < size; i++) {
+        smooth[i] = (float)binomial_coeff(n, i);
+    }
+
+    // Create derivative kernel (gradient): [-center, ..., -1, 0, 1, ..., center]
+    float *deriv = (float*)malloc(size * sizeof(float));
+    for (int i = 0; i < size; i++) {
+        deriv[i] = (float)(i - center);
+    }
+
+    // Outer product: smooth (column) * deriv (row) for horizontal gradient
+    for (int y = 0; y < size; y++) {
+        for (int x = 0; x < size; x++) {
+            filter[y * size + x] = smooth[y] * deriv[x];
         }
     }
+
+    free(smooth);
+    free(deriv);
 }
 
 // Edge detection filter (Sobel operator - vertical)
+// Uses binomial coefficients for smoothing and gradient for derivative
 void create_sobel_y_filter(float *filter, int size) {
-    // 3x3 Sobel Y filter
-    float sobel_y[9] = {
-        -1, -2, -1,
-         0,  0,  0,
-         1,  2,  1
-    };
-    
-    for (int i = 0; i < size * size; i++) {
-        if (i < 9) {
-            filter[i] = sobel_y[i];
-        } else {
-            filter[i] = 0.0f;
+    int center = size / 2;
+    int n = size - 1;
+
+    // Create smoothing kernel using binomial coefficients (Pascal's triangle row)
+    float *smooth = (float*)malloc(size * sizeof(float));
+    for (int i = 0; i < size; i++) {
+        smooth[i] = (float)binomial_coeff(n, i);
+    }
+
+    // Create derivative kernel (gradient): [-center, ..., -1, 0, 1, ..., center]
+    float *deriv = (float*)malloc(size * sizeof(float));
+    for (int i = 0; i < size; i++) {
+        deriv[i] = (float)(i - center);
+    }
+
+    // Outer product: deriv (column) * smooth (row) for vertical gradient
+    for (int y = 0; y < size; y++) {
+        for (int x = 0; x < size; x++) {
+            filter[y * size + x] = deriv[y] * smooth[x];
         }
     }
+
+    free(smooth);
+    free(deriv);
 }
 
 // Gaussian blur filter
@@ -203,39 +237,59 @@ void create_gaussian_blur_filter(float *filter, int size) {
     }
 }
 
-// Sharpen filter
+// Sharpen filter using unsharp masking concept
+// Creates identity + amount * (identity - gaussian_blur)
 void create_sharpen_filter(float *filter, int size) {
-    // 3x3 sharpen filter
-    float sharpen[9] = {
-         0, -1,  0,
-        -1,  5, -1,
-         0, -1,  0
-    };
-    
+    int center = size / 2;
+
+    // First create a Gaussian blur kernel
+    float *gaussian = (float*)malloc(size * size * sizeof(float));
+    create_gaussian_blur_filter(gaussian, size);
+
+    // Create identity kernel (all zeros except center = 1)
+    float *identity = (float*)malloc(size * size * sizeof(float));
     for (int i = 0; i < size * size; i++) {
-        if (i < 9) {
-            filter[i] = sharpen[i];
-        } else {
-            filter[i] = 0.0f;
-        }
+        identity[i] = 0.0f;
     }
+    identity[center * size + center] = 1.0f;
+
+    // Sharpen = identity + amount * (identity - gaussian)
+    // amount controls sharpening strength (higher = more sharpening)
+    float amount = 1.0f;
+    for (int i = 0; i < size * size; i++) {
+        filter[i] = identity[i] + amount * (identity[i] - gaussian[i]);
+    }
+
+    free(gaussian);
+    free(identity);
 }
 
-// Laplacian edge detection filter
+// Laplacian edge detection filter using LoG (Laplacian of Gaussian)
+// Uses the Laplacian of Gaussian formula for better edge detection at various scales
 void create_laplacian_filter(float *filter, int size) {
-    // 3x3 Laplacian filter
-    float laplacian[9] = {
-         0, -1,  0,
-        -1,  4, -1,
-         0, -1,  0
-    };
-    
-    for (int i = 0; i < size * size; i++) {
-        if (i < 9) {
-            filter[i] = laplacian[i];
-        } else {
-            filter[i] = 0.0f;
+    int center = size / 2;
+    // Sigma scales with filter size for appropriate smoothing
+    float sigma = size / 6.0f;
+    float sigma2 = sigma * sigma;
+
+    float sum = 0.0f;
+    for (int y = 0; y < size; y++) {
+        for (int x = 0; x < size; x++) {
+            float dx = (float)(x - center);
+            float dy = (float)(y - center);
+            float r2 = dx * dx + dy * dy;
+
+            // Laplacian of Gaussian (LoG) formula
+            filter[y * size + x] = ((r2 - 2 * sigma2) / (sigma2 * sigma2)) *
+                                   exp(-r2 / (2 * sigma2));
+            sum += filter[y * size + x];
         }
+    }
+
+    // Normalize so the sum is zero (characteristic of Laplacian filters)
+    float mean = sum / (size * size);
+    for (int i = 0; i < size * size; i++) {
+        filter[i] -= mean;
     }
 }
 

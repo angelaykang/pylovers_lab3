@@ -48,6 +48,40 @@ __global__ void convolutionGPU(unsigned int *image, float *filter, unsigned int 
         } \
     } while(0)
 
+// Helper function to compute binomial coefficient C(n, k)
+static int binomial_coeff(int n, int k) {
+    if (k > n) return 0;
+    if (k == 0 || k == n) return 1;
+
+    int result = 1;
+    for (int i = 0; i < k; i++) {
+        result = result * (n - i) / (i + 1);
+    }
+    return result;
+}
+
+// Create Gaussian blur filter
+static void create_gaussian_filter(float *filter, int size) {
+    float sigma = size / 3.0f;
+    float sum = 0.0f;
+    int center = size / 2;
+
+    for (int y = 0; y < size; y++) {
+        for (int x = 0; x < size; x++) {
+            float dx = (float)(x - center);
+            float dy = (float)(y - center);
+            float value = expf(-(dx * dx + dy * dy) / (2 * sigma * sigma));
+            filter[y * size + x] = value;
+            sum += value;
+        }
+    }
+
+    // Normalize
+    for (int i = 0; i < size * size; i++) {
+        filter[i] /= sum;
+    }
+}
+
 int main(int argc, char *argv[]) {
     if (argc < 4) {
         fprintf(stderr, "Usage: %s <image_size_M> <filter_size_N> <filter_type>\n", argv[0]);
@@ -86,42 +120,94 @@ int main(int argc, char *argv[]) {
     // Allocate filter
     float *h_filter = (float*)malloc(N * N * sizeof(float));
     
-    // Create filter based on type (simplified - you can expand this)
+    // Create filter based on type using dynamic sizing
+    int center = N / 2;
+    int n = N - 1;
+
     if (strcmp(filter_type, "sobel_x") == 0) {
-        float sobel_x[9] = {-1, 0, 1, -2, 0, 2, -1, 0, 1};
-        for (int i = 0; i < N * N && i < 9; i++) {
-            h_filter[i] = sobel_x[i];
+        // Sobel X: Uses binomial coefficients for smoothing and gradient for derivative
+        float *smooth = (float*)malloc(N * sizeof(float));
+        float *deriv = (float*)malloc(N * sizeof(float));
+
+        for (int i = 0; i < N; i++) {
+            smooth[i] = (float)binomial_coeff(n, i);
+            deriv[i] = (float)(i - center);
         }
-    } else if (strcmp(filter_type, "sobel_y") == 0) {
-        float sobel_y[9] = {-1, -2, -1, 0, 0, 0, 1, 2, 1};
-        for (int i = 0; i < N * N && i < 9; i++) {
-            h_filter[i] = sobel_y[i];
-        }
-    } else if (strcmp(filter_type, "gaussian") == 0) {
-        float sigma = N / 3.0f;
-        float sum = 0.0f;
-        int center = N / 2;
+
+        // Outer product: smooth (column) * deriv (row) for horizontal gradient
         for (int y = 0; y < N; y++) {
             for (int x = 0; x < N; x++) {
-                float dx = x - center;
-                float dy = y - center;
-                float value = expf(-(dx * dx + dy * dy) / (2 * sigma * sigma));
-                h_filter[y * N + x] = value;
-                sum += value;
+                h_filter[y * N + x] = smooth[y] * deriv[x];
             }
         }
-        for (int i = 0; i < N * N; i++) {
-            h_filter[i] /= sum;
+
+        free(smooth);
+        free(deriv);
+    } else if (strcmp(filter_type, "sobel_y") == 0) {
+        // Sobel Y: Uses binomial coefficients for smoothing and gradient for derivative
+        float *smooth = (float*)malloc(N * sizeof(float));
+        float *deriv = (float*)malloc(N * sizeof(float));
+
+        for (int i = 0; i < N; i++) {
+            smooth[i] = (float)binomial_coeff(n, i);
+            deriv[i] = (float)(i - center);
         }
+
+        // Outer product: deriv (column) * smooth (row) for vertical gradient
+        for (int y = 0; y < N; y++) {
+            for (int x = 0; x < N; x++) {
+                h_filter[y * N + x] = deriv[y] * smooth[x];
+            }
+        }
+
+        free(smooth);
+        free(deriv);
+    } else if (strcmp(filter_type, "gaussian") == 0) {
+        // Gaussian blur filter
+        create_gaussian_filter(h_filter, N);
     } else if (strcmp(filter_type, "sharpen") == 0) {
-        float sharpen[9] = {0, -1, 0, -1, 5, -1, 0, -1, 0};
-        for (int i = 0; i < N * N && i < 9; i++) {
-            h_filter[i] = sharpen[i];
+        // Sharpen filter using unsharp masking: identity + amount * (identity - gaussian)
+        float *gaussian = (float*)malloc(N * N * sizeof(float));
+        create_gaussian_filter(gaussian, N);
+
+        // Create identity kernel (all zeros except center = 1)
+        float *identity = (float*)malloc(N * N * sizeof(float));
+        for (int i = 0; i < N * N; i++) {
+            identity[i] = 0.0f;
         }
+        identity[center * N + center] = 1.0f;
+
+        // Sharpen = identity + amount * (identity - gaussian)
+        float amount = 1.0f;
+        for (int i = 0; i < N * N; i++) {
+            h_filter[i] = identity[i] + amount * (identity[i] - gaussian[i]);
+        }
+
+        free(gaussian);
+        free(identity);
     } else if (strcmp(filter_type, "laplacian") == 0) {
-        float laplacian[9] = {0, -1, 0, -1, 4, -1, 0, -1, 0};
-        for (int i = 0; i < N * N && i < 9; i++) {
-            h_filter[i] = laplacian[i];
+        // Laplacian of Gaussian (LoG) filter
+        float sigma = N / 6.0f;
+        float sigma2 = sigma * sigma;
+
+        float sum = 0.0f;
+        for (int y = 0; y < N; y++) {
+            for (int x = 0; x < N; x++) {
+                float dx = (float)(x - center);
+                float dy = (float)(y - center);
+                float r2 = dx * dx + dy * dy;
+
+                // Laplacian of Gaussian (LoG) formula
+                h_filter[y * N + x] = ((r2 - 2 * sigma2) / (sigma2 * sigma2)) *
+                                      expf(-r2 / (2 * sigma2));
+                sum += h_filter[y * N + x];
+            }
+        }
+
+        // Normalize so the sum is zero (characteristic of Laplacian filters)
+        float mean = sum / (N * N);
+        for (int i = 0; i < N * N; i++) {
+            h_filter[i] -= mean;
         }
     } else {
         fprintf(stderr, "Error: Unknown filter type: %s\n", filter_type);

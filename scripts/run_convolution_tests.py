@@ -9,7 +9,7 @@ is_windows = sys.platform.startswith("win")
 ext = ".exe" if is_windows else ""
 
 image_sizes = [256, 512, 1024]
-filter_sizes = [3]
+filter_sizes = [3, 5, 7]
 filter_types = ["sobel_x", "sobel_y", "gaussian", "sharpen", "laplacian"]
 
 def exe(name):
