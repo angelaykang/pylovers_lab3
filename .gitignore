@@ -1,0 +1,40 @@
+# Build outputs
+*.exe
+*.obj
+*.o
+*.dll
+*.so
+*.dylib
+*.exp
+*.lib
+*.pdb
+*.ilk
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.python-version
+venv/
+.venv/
+env/
+
+# IDE / editor
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Convolution output written to repo root when run from root
+/input_*.pgm
+/output_*.pgm
+
+# Optional: uncomment to ignore PGM in samples/ too
+# samples/*.pgm
